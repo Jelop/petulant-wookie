@@ -1,0 +1,1 @@
+cmd_/home/pi/Code/petulant-wookie/Lab3/3.2.1/wait_event.ko := ld -EL -r  -T /home/pi/rpi-3.6.y/scripts/module-common.lds --build-id  -o /home/pi/Code/petulant-wookie/Lab3/3.2.1/wait_event.ko /home/pi/Code/petulant-wookie/Lab3/3.2.1/wait_event.o /home/pi/Code/petulant-wookie/Lab3/3.2.1/wait_event.mod.o
