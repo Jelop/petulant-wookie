@@ -1,0 +1,1 @@
+cmd_/home/pi/Code/petulant-wookie/Lab4/4.1.2/lab1_mutex1.ko := ld -EL -r  -T /home/pi/rpi-3.6.y/scripts/module-common.lds --build-id  -o /home/pi/Code/petulant-wookie/Lab4/4.1.2/lab1_mutex1.ko /home/pi/Code/petulant-wookie/Lab4/4.1.2/lab1_mutex1.o /home/pi/Code/petulant-wookie/Lab4/4.1.2/lab1_mutex1.mod.o
