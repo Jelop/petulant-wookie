@@ -65,7 +65,6 @@ asgn1_dev asgn1_device;
 int asgn1_major = 0;                      /* major number of module */  
 int asgn1_minor = 0;                      /* minor number of module */
 int asgn1_dev_count = 1;                  /* number of devices */
-dev_t devno;
 
 /**
  * This function frees all memory pages held by the module.
@@ -83,7 +82,10 @@ void free_memory_pages(void) {
    *   free the node
    * }
    * reset device data size, and num_pages
-   */  
+   */
+
+  if(list_empty(&asgn1_device.mem_list) != 0) return;
+  
   list_for_each_entry_safe(curr, temp, &asgn1_device.mem_list, list){
     if(curr->page != NULL){
       __free_page(curr->page);
@@ -279,17 +281,21 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
       printk(KERN_WARNING "Not enough memory left\n");
       return size_written;
     }
-
+    printk(KERN_INFO "allocated page %d\n", asgn1_device.num_pages);
     list_add_tail(&(curr->list), &asgn1_device.mem_list);
+    printk(KERN_INFO "added page to list%d\n", asgn1_device.num_pages);
     asgn1_device.num_pages++;
   }
 
   
   
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
+    printk(KERN_INFO "current page no = %d\n", curr_page_no);
     if(curr_page_no >= begin_page_no){
       size_to_copy = min(count, PAGE_SIZE);
+      printk(KERN_INFO "size to copy  = %d\n", size_to_copy);
       begin_offset = f_pos + size_written % PAGE_SIZE;
+      printk(KERN_INFO "begin offset = %d\n", begin_offset);
       while(size_to_be_written > 0){
         size_to_be_written = copy_from_user(page_address(curr->page) + begin_offset, buf,
                                             size_to_copy);
@@ -298,6 +304,8 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
         size_written += curr_size_written;
         count -= curr_size_written;
         begin_offset = f_pos + size_written % PAGE_SIZE;
+        printk(KERN_INFO "size to be written = %d\n current size written = %d\n size to copy = %d\n size written = %d\n count = %d\n begin offset = %d\n",
+               size_to_be_written, curr_size_written, size_to_copy, size_written, count, begin_offset);
       }
     }
     curr_page_no++;
@@ -390,8 +398,7 @@ struct file_operations asgn1_fops = {
  * Initialise the module and create the master device
  */
 int __init asgn1_init_module(void){
-  int result; 
-  // dev_t devno;
+  int result;
   /* COMPLETE ME */
   /**
    * set nprocs and max_nprocs of the device
@@ -406,16 +413,24 @@ int __init asgn1_init_module(void){
   atomic_set(&asgn1_device.nprocs, 0);
   atomic_set(&asgn1_device.max_nprocs, 1);
 
-  result = alloc_chrdev_region(&devno, asgn1_minor, asgn1_dev_count, MYDEV_NAME);
-  if(!result) goto fail_device;
-
+  asgn1_device.dev = MKDEV(asgn1_major, asgn1_minor);
+  result = alloc_chrdev_region(&asgn1_device.dev, asgn1_minor, asgn1_dev_count, MYDEV_NAME);
+  if(result != 0) {
+    printk(KERN_INFO "alloc_chrdev went wrong! result = %d\n", result);
+    goto fail_device;
+  }
+  printk(KERN_INFO "asgn_1_init: still alive after major number allocation\n");
+  asgn1_device.cdev = cdev_alloc();
   cdev_init(asgn1_device.cdev, &asgn1_fops);
   asgn1_device.cdev->owner = THIS_MODULE;
-  result = cdev_add(asgn1_device.cdev, devno, asgn1_dev_count);
-  if(!result) goto fail_device;
-
+  result = cdev_add(asgn1_device.cdev, asgn1_device.dev, asgn1_dev_count);
+  if(result != 0) {
+    printk(KERN_INFO "cdev init or add went wrong, probably add!\n");
+    goto fail_device;
+  }
+  printk(KERN_INFO "asgn_1_init: still alive after character device initialisation\n");
   INIT_LIST_HEAD(&asgn1_device.mem_list);
-
+  printk(KERN_INFO "asgn_1_init: still alive after init list head\n");
   //create proc entries. Dunno what for.
   
   asgn1_device.class = class_create(THIS_MODULE, MYDEV_NAME);
@@ -438,8 +453,8 @@ int __init asgn1_init_module(void){
  fail_device:
   printk(KERN_INFO "asgn_1_init: I died prematurely\n");
   class_destroy(asgn1_device.class);
-  cdev_del(&asgn1_device.cdev);
-  unregister_chrdev_region(devno, asgn1_dev_count);
+  cdev_del(asgn1_device.cdev);
+  unregister_chrdev_region(asgn1_device.dev, asgn1_dev_count);
 
 
   /* COMPLETE ME */
@@ -456,10 +471,13 @@ void __exit asgn1_exit_module(void){
   device_destroy(asgn1_device.class, asgn1_device.dev);
   class_destroy(asgn1_device.class);
   printk(KERN_WARNING "cleaned up udev entry\n");
-
+  
   free_memory_pages();
-  cdev_del(&asgn1_device.cdev);
-  unregister_chrdev_region(devno, asgn1_dev_count);
+  printk(KERN_INFO"successfully freed pages\n");
+  cdev_del(asgn1_device.cdev);
+  printk(KERN_INFO"successfully deleted device\n");
+  unregister_chrdev_region(asgn1_device.dev, asgn1_dev_count);
+  printk(KERN_INFO"successfully unregistered major/minor numbers\n");
   /* COMPLETE ME */
   /**
    * free all pages in the page list 

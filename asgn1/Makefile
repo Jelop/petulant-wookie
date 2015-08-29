@@ -1,5 +1,5 @@
 MODULE_NAME = asgn1
-EXTRA_CFLAGS += -w
+#EXTRA_CFLAGS += -w
 
 
 obj-m   := $(MODULE_NAME).o
@@ -26,5 +26,6 @@ help:
 	$(MAKE) -C $(KDIR) M=$(PWD) help
 
 install:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
-
+	-sudo rmmod asgn1
+	sudo insmod ./asgn1.ko
+	sudo chmod 777 /dev/asgn1

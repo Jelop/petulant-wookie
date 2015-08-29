@@ -26,10 +26,10 @@ __attribute__((section("__versions"))) = {
 	{ 0xb4c75863, "__class_create" },
 	{ 0xe3321d40, "cdev_add" },
 	{ 0x60c2503e, "cdev_init" },
+	{ 0x9d0d02cf, "cdev_alloc" },
 	{ 0x29537c9e, "alloc_chrdev_region" },
 	{ 0x37a0cba, "kfree" },
 	{ 0x969267bd, "__free_pages" },
-	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0x30407f, "contig_page_data" },
 	{ 0xeed38436, "malloc_sizes" },
 	{ 0x2da2b3ae, "__alloc_pages_nodemask" },
@@ -44,4 +44,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "EFCCE7E9352364E8E769084");
+MODULE_INFO(srcversion, "1F82C635F8EBF3EB6FD5024");
