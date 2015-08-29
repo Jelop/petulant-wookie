@@ -30,8 +30,11 @@ __attribute__((section("__versions"))) = {
 	{ 0x29537c9e, "alloc_chrdev_region" },
 	{ 0x37a0cba, "kfree" },
 	{ 0x969267bd, "__free_pages" },
+	{ 0x7ec1c780, "mem_map" },
 	{ 0x30407f, "contig_page_data" },
 	{ 0xeed38436, "malloc_sizes" },
+	{ 0xfbc74f64, "__copy_from_user" },
+	{ 0xfa2a45e, "__memzero" },
 	{ 0x2da2b3ae, "__alloc_pages_nodemask" },
 	{ 0xd197d610, "kmem_cache_alloc" },
 	{ 0x27e1a049, "printk" },
@@ -44,4 +47,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "1F82C635F8EBF3EB6FD5024");
+MODULE_INFO(srcversion, "11D7946CB5E34ACCCB71B5F");

@@ -287,32 +287,41 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
     asgn1_device.num_pages++;
   }
 
-  
+  printk(KERN_INFO "finished allocating pages\n");
   
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
     printk(KERN_INFO "current page no = %d\n", curr_page_no);
     if(curr_page_no >= begin_page_no){
+      //size_to_copy = min(count, PAGE_SIZE);
       size_to_copy = min(count, PAGE_SIZE);
       printk(KERN_INFO "size to copy  = %d\n", size_to_copy);
-      begin_offset = f_pos + size_written % PAGE_SIZE;
-      printk(KERN_INFO "begin offset = %d\n", begin_offset);
-      while(size_to_be_written > 0){
-        size_to_be_written = copy_from_user(page_address(curr->page) + begin_offset, buf,
-                                            size_to_copy);
+      //printk(KERN_INFO "file offset = %lld\n", f_pos);
+      begin_offset = *f_pos % PAGE_SIZE;
+      // printk(KERN_INFO "begin offset = %d\n", begin_offset);
+      while(size_to_copy > 0){
+        printk(KERN_INFO "in the while\n");
+        printk(KERN_INFO "offset = %d\n", begin_offset);
+        void *pagepoint = page_address(curr->page);
+        unsigned long add = pagepoint;
+        printk(KERN_INFO "page adress = %lu\n", add);
+        size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf,
+                                            size_to_copy); //+size_written
+        printk(KERN_INFO "Successfully copied from user\n");
         curr_size_written = size_to_copy - size_to_be_written;
         size_to_copy = size_to_be_written;
         size_written += curr_size_written;
         count -= curr_size_written;
-        begin_offset = f_pos + size_written % PAGE_SIZE;
-        printk(KERN_INFO "size to be written = %d\n current size written = %d\n size to copy = %d\n size written = %d\n count = %d\n begin offset = %d\n",
-               size_to_be_written, curr_size_written, size_to_copy, size_written, count, begin_offset);
+        *f_pos += size_written;
+        begin_offset = *f_pos % PAGE_SIZE;
+        
+        // printk(KERN_INFO "Successfully updated variables\n");
+        printk(KERN_INFO "size to be written = %d\n current size written = %d\n size to copy = %d\n size written = %d\n count = %d\n",
+               size_to_be_written, curr_size_written, size_to_copy, size_written, count);
       }
     }
     curr_page_no++;
     
-  }
-
-    
+    }
 
   asgn1_device.data_size = max(asgn1_device.data_size,
                                orig_f_pos + size_written);
@@ -412,7 +421,9 @@ int __init asgn1_init_module(void){
   printk(KERN_INFO "asgn_1_init: I am alive\n");
   atomic_set(&asgn1_device.nprocs, 0);
   atomic_set(&asgn1_device.max_nprocs, 1);
-
+  asgn1_device.num_pages = 0;
+  asgn1_device.data_size = 0;
+  
   asgn1_device.dev = MKDEV(asgn1_major, asgn1_minor);
   result = alloc_chrdev_region(&asgn1_device.dev, asgn1_minor, asgn1_dev_count, MYDEV_NAME);
   if(result != 0) {
