@@ -174,21 +174,21 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
    *   return the size copied to the user space so far
    */
 
-  if(f_pos > asgn1_device.data_size) return 0;
+  if(*f_pos > asgn1_device.data_size) return 0;
 
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
   
     if(curr_page_no <= begin_page_no){
-      begin_offset = f_pos + size_read % PAGE_SIZE;
-      size_to_copy = min(count, PAGE_SIZE);
-      while(size_to_be_read > 0){
-        size_to_be_read = copy_to_user(buf, page_address(curr->page) + begin_offset,
+      begin_offset = *f_pos + size_read % PAGE_SIZE;
+      size_to_copy = min((int)count,(int)(PAGE_SIZE - begin_offset));
+      while(size_to_copy > 0){
+        size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
                                        size_to_copy);
-        size_to_copy = size_to_be_read;
-        curr_size_read = size_to_copy - size_to_be_read;
+        size_to_copy = size_to_copy - size_to_be_read;
+        curr_size_read = size_to_copy;
         count -= curr_size_read;
         size_read += curr_size_read;
-        begin_offset = f_pos + size_read % PAGE_SIZE;
+        begin_offset = *f_pos + size_read % PAGE_SIZE;
       }
     }
 
@@ -261,9 +261,13 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
   size_t size_to_be_written;  /* size to be read in the current round in 
                                  while loop */
   size_t size_to_copy;
-  struct list_head *ptr = asgn1_device.mem_list.next;
+  //  struct list_head *ptr = asgn1_device.mem_list.next;
   page_node *curr;
 
+
+  void *pagepoint;
+  unsigned long add;
+ 
   /* COMPLETE ME */
   /**
    * Traverse the list until the first page reached, and add nodes if necessary
@@ -276,7 +280,7 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
 
   while(asgn1_device.num_pages * PAGE_SIZE < orig_f_pos + count){
     curr = kmalloc(sizeof(page_node), GFP_KERNEL);
-    if(curr) curr->page == alloc_page(GFP_KERNEL);
+    if(curr) curr->page = alloc_page(GFP_KERNEL);
     if(curr->page == NULL){
       printk(KERN_WARNING "Not enough memory left\n");
       return size_written;
@@ -293,25 +297,25 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
     printk(KERN_INFO "current page no = %d\n", curr_page_no);
     if(curr_page_no >= begin_page_no){
       //size_to_copy = min(count, PAGE_SIZE);
-      size_to_copy = min(count, PAGE_SIZE);
       printk(KERN_INFO "size to copy  = %d\n", size_to_copy);
       //printk(KERN_INFO "file offset = %lld\n", f_pos);
       begin_offset = *f_pos % PAGE_SIZE;
+      size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
       // printk(KERN_INFO "begin offset = %d\n", begin_offset);
       while(size_to_copy > 0){
         printk(KERN_INFO "in the while\n");
         printk(KERN_INFO "offset = %d\n", begin_offset);
-        void *pagepoint = page_address(curr->page);
-        unsigned long add = pagepoint;
+        pagepoint = page_address(curr->page);
+        add = (unsigned long)pagepoint;
         printk(KERN_INFO "page adress = %lu\n", add);
-        size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf,
+        size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf + size_written,
                                             size_to_copy); //+size_written
         printk(KERN_INFO "Successfully copied from user\n");
         curr_size_written = size_to_copy - size_to_be_written;
         size_to_copy = size_to_be_written;
         size_written += curr_size_written;
         count -= curr_size_written;
-        *f_pos += size_written;
+        *f_pos += curr_size_written;
         begin_offset = *f_pos % PAGE_SIZE;
         
         // printk(KERN_INFO "Successfully updated variables\n");
