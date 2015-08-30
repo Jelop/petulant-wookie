@@ -30,9 +30,9 @@ __attribute__((section("__versions"))) = {
 	{ 0x60c2503e, "cdev_init" },
 	{ 0x9d0d02cf, "cdev_alloc" },
 	{ 0x29537c9e, "alloc_chrdev_region" },
-	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0x37a0cba, "kfree" },
 	{ 0x969267bd, "__free_pages" },
+	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0x67c2fa54, "__copy_to_user" },
 	{ 0x7ec1c780, "mem_map" },
 	{ 0x30407f, "contig_page_data" },
@@ -52,4 +52,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "32CB75E8AE113BD004FA8A2");
+MODULE_INFO(srcversion, "8C282165046590C6ED5B02F");

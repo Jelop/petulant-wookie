@@ -349,7 +349,7 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
  * The ioctl function, which nothing needs to be done in this case.
  */
 long asgn1_ioctl (struct file *filp, unsigned cmd, unsigned long arg) {
-  int nr;
+  int nr = _IOC_NR(cmd);
   int new_nprocs;
   int result;
 
@@ -362,6 +362,28 @@ long asgn1_ioctl (struct file *filp, unsigned cmd, unsigned long arg) {
    value before setting max_nprocs
   */
 
+  if(_IOC_TYPE(cmd) != MYIOC_TYPE) return -EINVAL;
+  if(nr == SET_NPROC_OP){
+    if(!access_ok(VERIFY_READ, arg, sizeof(cmd))){
+      return -EFAULT;
+    } else {
+   
+      result = __get_user(new_nprocs, (int *)arg);
+      if(result != 0){
+        printk(KERN_INFO "_get_user: Bad Access\n");
+        return -EFAULT;
+      }
+
+      if(new_nprocs <= 0){
+        printk(KERN_INFO "new_nprocs <= 0!\n");
+        return -EINVAL;
+      }
+
+      atomic_set(&asgn1_device.max_nprocs, new_nprocs);
+      return 0;
+    }
+  }
+  
   return -ENOTTY;
 }
 
@@ -373,7 +395,6 @@ long asgn1_ioctl (struct file *filp, unsigned cmd, unsigned long arg) {
 int asgn1_read_procmem(char *buf, char **start, off_t offset, int count,
                        int *eof, void *data) {
   /* stub */
-  int result;
   *eof = 1;
   return snprintf(buf, count, "Num Pages = %d\nData Size = %d\n Num Procs = %d\n Max Procs = %d\n",
                   asgn1_device.num_pages, asgn1_device.data_size, atomic_read(&asgn1_device.nprocs), atomic_read(&asgn1_device.max_nprocs));
