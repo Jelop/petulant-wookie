@@ -60,7 +60,7 @@ typedef struct asgn1_dev_t {
 } asgn1_dev;
 
 asgn1_dev asgn1_device;
-
+struct proc_dir_entry *asgn1_proc;
 
 int asgn1_major = 0;                      /* major number of module */  
 int asgn1_minor = 0;                      /* minor number of module */
@@ -84,7 +84,7 @@ void free_memory_pages(void) {
    * reset device data size, and num_pages
    */
 
-  if(list_empty(&asgn1_device.mem_list) != 0) return;
+  //if(list_empty(&asgn1_device.mem_list) != 0) return;
   
   list_for_each_entry_safe(curr, temp, &asgn1_device.mem_list, list){
     if(curr->page != NULL){
@@ -111,10 +111,15 @@ int asgn1_open(struct inode *inode, struct file *filp) {
    * if opened in write-only mode, free all memory pages
    *
    */
-  atomic_inc(&asgn1_device.nprocs);
-  if(atomic_read(&asgn1_device.nprocs) > atomic_read(&asgn1_device.max_nprocs))
+
+  if(atomic_read(&asgn1_device.nprocs) >= atomic_read(&asgn1_device.max_nprocs))
     return -EBUSY;
 
+  atomic_inc(&asgn1_device.nprocs);
+  
+  if(filp->f_mode == FMODE_WRITE && filp->f_mode != FMODE_READ){
+    free_memory_pages();
+  }
   //Don't yet know how to get its permissions. file->fmode/flags? inode->umode?
 
   return 0; /* success */
@@ -150,8 +155,8 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
   size_t size_to_be_read;   /* size to be read in the current round in 
                                while loop */
   size_t size_to_copy;
-
-  struct list_head *ptr = asgn1_device.mem_list.next;
+  size_t actual_size;
+  // struct list_head *ptr = asgn1_device.mem_list.next;
   page_node *curr;
 
 
@@ -176,19 +181,24 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
 
   if(*f_pos > asgn1_device.data_size) return 0;
 
+  actual_size = min(count, asgn1_device.data_size - (size_t) *f_pos);
+  
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
   
-    if(curr_page_no <= begin_page_no){
-      begin_offset = *f_pos + size_read % PAGE_SIZE;
-      size_to_copy = min((int)count,(int)(PAGE_SIZE - begin_offset));
+    if(curr_page_no >= begin_page_no){
+      begin_offset = *f_pos % PAGE_SIZE;
+      size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       while(size_to_copy > 0){
+        printk(KERN_INFO "size to copy = %d\n", size_to_copy);
         size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
                                        size_to_copy);
-        size_to_copy = size_to_copy - size_to_be_read;
-        curr_size_read = size_to_copy;
-        count -= curr_size_read;
+        curr_size_read = size_to_copy - size_to_be_read;
+        size_to_copy= size_to_be_read;
+        actual_size -= curr_size_read;
         size_read += curr_size_read;
-        begin_offset = *f_pos + size_read % PAGE_SIZE;
+        *f_pos += curr_size_read;
+        begin_offset = *f_pos % PAGE_SIZE;
+        printk(KERN_INFO " curr_size_read = %d\nsize to copy = %d\n actual size = %d\n size read = %d\n", curr_size_read, size_to_copy, actual_size, size_read);
       }
     }
 
@@ -364,13 +374,15 @@ int asgn1_read_procmem(char *buf, char **start, off_t offset, int count,
                        int *eof, void *data) {
   /* stub */
   int result;
-
+  *eof = 1;
+  return snprintf(buf, count, "Num Pages = %d\nData Size = %d\n Num Procs = %d\n Max Procs = %d\n",
+                  asgn1_device.num_pages, asgn1_device.data_size, atomic_read(&asgn1_device.nprocs), atomic_read(&asgn1_device.max_nprocs));
   /* COMPLETE ME */
   /**
    * use snprintf to print some info to buf, up to size count
    * set eof
    */
-  return result;
+
 }
 
 
@@ -447,6 +459,15 @@ int __init asgn1_init_module(void){
   INIT_LIST_HEAD(&asgn1_device.mem_list);
   printk(KERN_INFO "asgn_1_init: still alive after init list head\n");
   //create proc entries. Dunno what for.
+
+  asgn1_proc = create_proc_entry(MYDEV_NAME, 0, NULL);
+  if(!asgn1_proc){
+    printk(KERN_INFO "Failed to initialise /proc/%s\n", MYDEV_NAME);
+    result = -ENOMEM;
+    goto fail_device;
+  }
+
+  asgn1_proc->read_proc = asgn1_read_procmem;
   
   asgn1_device.class = class_create(THIS_MODULE, MYDEV_NAME);
   if (IS_ERR(asgn1_device.class)) {
@@ -468,6 +489,8 @@ int __init asgn1_init_module(void){
  fail_device:
   printk(KERN_INFO "asgn_1_init: I died prematurely\n");
   class_destroy(asgn1_device.class);
+  if(asgn1_proc)
+    remove_proc_entry(MYDEV_NAME, NULL);
   cdev_del(asgn1_device.cdev);
   unregister_chrdev_region(asgn1_device.dev, asgn1_dev_count);
 
@@ -489,6 +512,8 @@ void __exit asgn1_exit_module(void){
   
   free_memory_pages();
   printk(KERN_INFO"successfully freed pages\n");
+  if(asgn1_proc)
+    remove_proc_entry(MYDEV_NAME, NULL);
   cdev_del(asgn1_device.cdev);
   printk(KERN_INFO"successfully deleted device\n");
   unregister_chrdev_region(asgn1_device.dev, asgn1_dev_count);
