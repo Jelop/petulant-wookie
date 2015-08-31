@@ -290,10 +290,15 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
 
   while(asgn1_device.num_pages * PAGE_SIZE < orig_f_pos + count){
     curr = kmalloc(sizeof(page_node), GFP_KERNEL);
-    if(curr) curr->page = alloc_page(GFP_KERNEL);
+    if(curr){
+      curr->page = alloc_page(GFP_KERNEL);
+    } else {
+      printk(KERN_WARNING "page_node allocation failed\n");
+      return -ENOMEM;
+    }
     if(curr->page == NULL){
-      printk(KERN_WARNING "Not enough memory left\n");
-      return size_written;
+      printk(KERN_WARNING "Page allocation failed\n");
+      return -ENOMEM;
     }
     printk(KERN_INFO "allocated page %d\n", asgn1_device.num_pages);
     list_add_tail(&(curr->list), &asgn1_device.mem_list);
@@ -380,6 +385,7 @@ long asgn1_ioctl (struct file *filp, unsigned cmd, unsigned long arg) {
       }
 
       atomic_set(&asgn1_device.max_nprocs, new_nprocs);
+      printk(KERN_INFO "max_nprocs now = %d\n", new_nprocs);
       return 0;
     }
   }
@@ -410,7 +416,7 @@ int asgn1_read_procmem(char *buf, char **start, off_t offset, int count,
 static int asgn1_mmap (struct file *filp, struct vm_area_struct *vma)
 {
   unsigned long pfn;
-  unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+  unsigned long offset = vma->vm_pgoff << PAGE_SHIFT; //num of pages?
   unsigned long len = vma->vm_end - vma->vm_start;
   unsigned long ramdisk_size = asgn1_device.num_pages * PAGE_SIZE;
   page_node *curr;
@@ -418,12 +424,25 @@ static int asgn1_mmap (struct file *filp, struct vm_area_struct *vma)
 
   /* COMPLETE ME */
   /**
-   * check offset and len
+   * check offset !against len! and len !against ramdisk size! ?
    *
    * loop through the entire page list, once the first requested page
    *   reached, add each page with remap_pfn_range one by one
    *   up to the last requested page
    */
+
+  if(len > ramdisk_size){
+    printk(KERN_WARNING "Virutal memory area too large");
+    return -EINVAL;
+  }
+
+  list_for_each_entry(curr, &asgn1_device.mem_list, list){
+    if(index >= offset){
+    pfn = page_to_pfn(curr->page);
+    remap_pfn_range(vma, vma->vm_start+(index*PAGE_SIZE), pfn, PAGE_SIZE, vma->vm_page_prot);
+    }
+    index++;
+  }
   return 0;
 }
 
