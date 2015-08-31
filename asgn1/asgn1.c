@@ -92,6 +92,7 @@ void free_memory_pages(void) {
     }
     list_del(&curr->list);
     kfree(curr);
+    printk(KERN_INFO "Freed memory");
   }
   asgn1_device.data_size = 0;
   asgn1_device.num_pages = 0;
@@ -117,7 +118,9 @@ int asgn1_open(struct inode *inode, struct file *filp) {
 
   atomic_inc(&asgn1_device.nprocs);
   
-  if(filp->f_mode == FMODE_WRITE && filp->f_mode != FMODE_READ){
+  //  if(filp->f_mode == FMODE_WRITE /*&& filp->f_mode != FMODE_READ*/){
+  if((filp->f_flags & O_ACCMODE) == O_WRONLY){
+    printk(KERN_INFO "Write only");
     free_memory_pages();
   }
   //Don't yet know how to get its permissions. file->fmode/flags? inode->umode?
