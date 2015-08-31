@@ -213,7 +213,7 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
 
 static loff_t asgn1_lseek (struct file *file, loff_t offset, int cmd)
 {
-  loff_t testpos;
+  loff_t testpos = 0;
 
   size_t buffer_size = asgn1_device.num_pages * PAGE_SIZE;
 
@@ -442,7 +442,7 @@ static int asgn1_mmap (struct file *filp, struct vm_area_struct *vma)
   }
 
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
-    if(index >= offset){
+    if(index >= offset && vma->vm_start+(index*PAGE_SIZE) < vma->vm_end){
     pfn = page_to_pfn(curr->page);
     remap_pfn_range(vma, vma->vm_start+(index*PAGE_SIZE), pfn, PAGE_SIZE, vma->vm_page_prot);
     }
