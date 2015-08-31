@@ -131,8 +131,8 @@ int main (int argc, char **argv)
     printf ("mmap succeeded:  %p\n", mmap_buf);
 
     (void)lseek (fd, 0, SEEK_SET);
-    //read_and_compare (fd, buf, mmap_buf, SIZE);
-    //printf ("comparison of same data via read() and mmap() successful\n");
+    read_and_compare (fd, buf, mmap_buf, SIZE);
+    printf ("comparison of same data via read() and mmap() successful\n");
 
 
     /* Change one randomly chosen byte in the mmap region */
@@ -143,8 +143,8 @@ int main (int argc, char **argv)
 
     /*  repeat the read-back comparison. */
     (void)lseek (fd, 0, SEEK_SET);
-    //read_and_compare (fd, read_buf, mmap_buf, SIZE);
-    //printf ("comparison of modified data via read() and mmap() successful\n");
+    read_and_compare (fd, read_buf, mmap_buf, SIZE);
+    printf ("comparison of modified data via read() and mmap() successful\n");
 
 
     (void)lseek (fd, 0, SEEK_SET);

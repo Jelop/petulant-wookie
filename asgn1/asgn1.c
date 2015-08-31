@@ -436,6 +436,11 @@ static int asgn1_mmap (struct file *filp, struct vm_area_struct *vma)
     return -EINVAL;
   }
 
+  if(offset > asgn1_device.num_pages){
+    printk(KERN_WARNING "Wants more pages than there are\n");
+    return -EINVAL;
+  }
+
   list_for_each_entry(curr, &asgn1_device.mem_list, list){
     if(index >= offset){
     pfn = page_to_pfn(curr->page);
