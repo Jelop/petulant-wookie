@@ -52,7 +52,7 @@ int main(int argc, char **argv){
       
       else {
 	size_written += size_write;
-	size_reamaining -= size_write;
+	size_remaining -= size_write;
       }
       
     }
