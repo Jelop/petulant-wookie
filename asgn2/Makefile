@@ -25,6 +25,7 @@ help:
 	$(MAKE) -C $(KDIR) M=$(PWD) help
 
 install:
+	sudo dmesg -C
 	-sudo rmmod asgn2
 	sudo insmod ./asgn2.ko
 	sudo chmod 777 /dev/asgn2

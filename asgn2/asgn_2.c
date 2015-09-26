@@ -49,11 +49,18 @@ typedef struct page_node_rec {
   struct page *page;
 } page_node;
 
-typedef struct circ_buffer{
+typedef struct circ_buffer_def{
   u8 buf[BUF_SIZE];
   int head;
   int tail;
-} circ_buffer_def;
+} circ_buffer_type;
+
+typedef struct page_queue_def{
+  int head_index;
+  int tail_index;
+  size_t head_offset;
+  size_t tail_offset;
+} page_queue_type;
 
 typedef struct asgn2_dev_t {
   dev_t dev;            /* the device */
@@ -68,7 +75,11 @@ typedef struct asgn2_dev_t {
   struct device *device;   /* the udev device node */
 } asgn2_dev;
 
-circ_buffer_def circ_buffer;
+int bottom_half();
+DECLARE_TASKLET(producer, bottom_half, 0);
+circ_buffer_type circ_buffer;
+page_queue_type page_queue;
+
 asgn2_dev asgn2_device;
 struct proc_dir_entry *asgn2_proc;        /*Proc entry*/
 
@@ -135,9 +146,13 @@ int asgn2_release (struct inode *inode, struct file *filp) {
 
 irqreturn_t dummyport_interrupt(int irq, void*dev_id){
 
+  /*Use a spinlock when writing to and reading from the circular buffer to avoid race conditions
+    spinlock because an interrupt is not allowed to sleep*/
+
+  
   static u8 half_byte;
   static int sig_flag = 1;
-
+  
   if(sig_flag == 1){
     half_byte = read_half_byte() << 4;
     sig_flag = 0;
@@ -147,10 +162,11 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
     printk(KERN_INFO "read least sig\n");
     sig_flag = 1;
     //add to circular buffer
-    if(CIRC_SPACE_TO_END(circ_buffer.head, circ_buffer.tail, BUF_SIZE) != 0){
+    if(CIRC_SPACE(circ_buffer.tail, circ_buffer.head, BUF_SIZE) > 0){
       circ_buffer.buf[circ_buffer.tail] = half_byte;
       circ_buffer.tail = (circ_buffer.tail + 1) % BUF_SIZE;
       //call tasklet
+      tasklet_schedule(&producer);
     
     } else {
       printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
@@ -162,6 +178,79 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
 
   return IRQ_HANDLED;
 }
+
+
+int bottom_half(){
+
+  int count = CIRC_CNT(circ_buffer.tail, circ_buffer.head, BUF_SIZE);
+  printk(KERN_INFO "count = %d\n", count);
+ 
+  size_t size_written = 0;  /* size written to virtual disk in this function */
+  size_t begin_offset = 0;   /* the offset from the beginning of a page to start writing */
+  int begin_page_no = page_queue.tail_index;  /* the first page this finction
+                                                 should start writing to */
+  int f_pos = page_queue.tail_offset;
+  int curr_page_no = 0;     /* the current page number */
+ 
+  size_t size_to_copy;      /* keeps track of how much data is left to copy for a given page*/
+  page_node *curr;        /*pointer to a page node for use with list for each entry loop*/
+
+  /* Allocates as many pages as necessary to store count bytes*/
+  printk(KERN_INFO "num pages * page size = %d\n", asgn2_device.num_pages * PAGE_SIZE);
+  printk(KERN_INFO "data size + count = %d\n", asgn2_device.data_size + count);
+  while(asgn2_device.num_pages * PAGE_SIZE < asgn2_device.data_size + count){
+    curr = kmalloc(sizeof(page_node), GFP_KERNEL);
+    if(curr){
+      curr->page = alloc_page(GFP_KERNEL);
+    } else {
+      printk(KERN_WARNING "page_node allocation failed\n");
+      return -ENOMEM;
+    }
+    if(curr->page == NULL){
+      printk(KERN_WARNING "Page allocation failed\n");
+      return -ENOMEM;
+    }
+    printk(KERN_INFO "allocated page %d\n", asgn2_device.num_pages);
+    list_add_tail(&(curr->list), &asgn2_device.mem_list);
+    printk(KERN_INFO "added page to list%d\n", asgn2_device.num_pages);
+    asgn2_device.num_pages++;
+  }
+ 
+  /* Loops through each page in the list and writes the appropriate amount to each one*/
+  list_for_each_entry(curr, &asgn2_device.mem_list, list){
+    //printk(KERN_INFO "current page no = %d\n", curr_page_no);
+    if(curr_page_no >= begin_page_no){
+      begin_offset = f_pos % PAGE_SIZE;
+      size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
+      while(size_to_copy > 0){
+
+        //size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf + size_written,
+        //size_to_copy); /* stores the number of bytes that remain to be written*/
+
+        //maybe put in a spinlock here?
+        memcpy(page_address(curr->page) + begin_offset, circ_buffer.buf + circ_buffer.head, size_to_copy);
+        circ_buffer.head = (circ_buffer.head + size_to_copy) % BUF_SIZE;
+        // curr_size_written = size_to_copy;
+        size_written += size_to_copy;
+        count -= size_to_copy;
+        f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
+        size_to_copy = 0;
+        begin_offset = f_pos % PAGE_SIZE;
+      }
+    }
+    curr_page_no++;
+    
+  }
+
+  printk(KERN_INFO "SIZE WRITTEN = %d\n", size_written);
+  asgn2_device.data_size += ((page_queue.tail_index - page_queue.head_index) * PAGE_SIZE) + size_written;
+  page_queue.tail_index = curr_page_no-1;
+  page_queue.tail_offset = begin_offset;
+  printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
+  return size_written;
+     
+}
+
 
 /**
  * This function reads contents of the virtual disk and writes to the user 
@@ -389,9 +478,19 @@ int __init asgn2_init_module(void){
 
   asgn2_proc->read_proc = asgn2_read_procmem;
 
+  //Init gpio
+
+  gpio_dummy_init();
+   
   //Initialise circular buffer
   circ_buffer.head = 0;
   circ_buffer.tail = 0;
+
+  //initialise page queue struct
+  page_queue.head_index = 0;
+  page_queue.tail_index = 0;
+  page_queue.head_offset = 0;
+  page_queue.tail_offset = 0;
   
   asgn2_device.class = class_create(THIS_MODULE, MYDEV_NAME);
   if (IS_ERR(asgn2_device.class)) {
@@ -437,6 +536,8 @@ void __exit asgn2_exit_module(void){
   printk(KERN_INFO"successfully freed pages\n");
   if(asgn2_proc)
   remove_proc_entry(MYDEV_NAME, NULL);
+
+  gpio_dummy_exit();
   cdev_del(asgn2_device.cdev);
   printk(KERN_INFO"successfully deleted device\n");
   unregister_chrdev_region(asgn2_device.dev, asgn2_dev_count);
