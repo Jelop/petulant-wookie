@@ -156,12 +156,13 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
   if(sig_flag == 1){
     half_byte = read_half_byte() << 4;
     sig_flag = 0;
-    printk(KERN_INFO "read sig\n");
+    // printk(KERN_INFO "read sig\n");
   } else {
     half_byte = half_byte | read_half_byte();
-    printk(KERN_INFO "read least sig\n");
+    //printk(KERN_INFO "read least sig\n");
     sig_flag = 1;
     //add to circular buffer
+    //printk(KERN_INFO "buffer space remaining: %d\n", CIRC_SPACE(circ_buffer.tail, circ_buffer.head, BUF_SIZE));
     if(CIRC_SPACE(circ_buffer.tail, circ_buffer.head, BUF_SIZE) > 0){
       circ_buffer.buf[circ_buffer.tail] = half_byte;
       circ_buffer.tail = (circ_buffer.tail + 1) % BUF_SIZE;
@@ -169,7 +170,7 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
       tasklet_schedule(&producer);
     
     } else {
-      printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
+      //printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
     }
   }
     
@@ -183,12 +184,13 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
 int bottom_half(){
 
   int count = CIRC_CNT(circ_buffer.tail, circ_buffer.head, BUF_SIZE);
-  printk(KERN_INFO "count = %d\n", count);
+  // printk(KERN_INFO "count = %d\n", count);
  
   size_t size_written = 0;  /* size written to virtual disk in this function */
   size_t begin_offset = 0;   /* the offset from the beginning of a page to start writing */
-  int begin_page_no = page_queue.tail_index;  /* the first page this finction
-                                                 should start writing to */
+  int begin_page_no = page_queue.tail_index;// + (page_queue.tail_offset %PAGE_SIZE);  /* the first page this finction
+  //    should start writing to */
+  //might be worth changing f_pos to a different identifier
   int f_pos = page_queue.tail_offset;
   int curr_page_no = 0;     /* the current page number */
  
@@ -196,8 +198,8 @@ int bottom_half(){
   page_node *curr;        /*pointer to a page node for use with list for each entry loop*/
 
   /* Allocates as many pages as necessary to store count bytes*/
-  printk(KERN_INFO "num pages * page size = %d\n", asgn2_device.num_pages * PAGE_SIZE);
-  printk(KERN_INFO "data size + count = %d\n", asgn2_device.data_size + count);
+  //printk(KERN_INFO "num pages * page size = %d\n", asgn2_device.num_pages * PAGE_SIZE);
+  //printk(KERN_INFO "data size + count = %d\n", asgn2_device.data_size + count);
   while(asgn2_device.num_pages * PAGE_SIZE < asgn2_device.data_size + count){
     curr = kmalloc(sizeof(page_node), GFP_KERNEL);
     if(curr){
@@ -210,16 +212,17 @@ int bottom_half(){
       printk(KERN_WARNING "Page allocation failed\n");
       return -ENOMEM;
     }
-    printk(KERN_INFO "allocated page %d\n", asgn2_device.num_pages);
+    //printk(KERN_INFO "allocated page %d\n", asgn2_device.num_pages);
     list_add_tail(&(curr->list), &asgn2_device.mem_list);
-    printk(KERN_INFO "added page to list%d\n", asgn2_device.num_pages);
+    //printk(KERN_INFO "added page to list%d\n", asgn2_device.num_pages);
     asgn2_device.num_pages++;
   }
  
   /* Loops through each page in the list and writes the appropriate amount to each one*/
   list_for_each_entry(curr, &asgn2_device.mem_list, list){
     //printk(KERN_INFO "current page no = %d\n", curr_page_no);
-    if(curr_page_no >= begin_page_no){
+    if(curr_page_no >= begin_page_no && count > 0){
+      printk(KERN_INFO "page no = %d\n", curr_page_no);
       begin_offset = f_pos % PAGE_SIZE;
       size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
     
@@ -232,15 +235,16 @@ int bottom_half(){
       f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
       size_to_copy = 0;
       begin_offset = f_pos % PAGE_SIZE;
-      
+      printk(KERN_INFO "offset = %d, count = %d\n", begin_offset, count);
     }
     curr_page_no++;
     
   }
 
   printk(KERN_INFO "SIZE WRITTEN = %d\n", size_written);
-  asgn2_device.data_size += ((page_queue.tail_index - page_queue.head_index) * PAGE_SIZE) + size_written;
-  page_queue.tail_index = curr_page_no-1;
+  asgn2_device.data_size += size_written; //((page_queue.tail_index - page_queue.head_index) * PAGE_SIZE)
+  if(begin_offset == 0)
+  page_queue.tail_index++;
   page_queue.tail_offset = begin_offset;
   printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
@@ -266,6 +270,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   size_t size_to_copy;      /* keeps track of size of data to copy for each page*/
   size_t actual_size;       /* variable to track total data that hasn't yet been read*/
   page_node *curr;          /* pointer to a page node for use with list for each entry loop*/
+  page_node *temp;
   
   int freed = 0;
   
@@ -274,7 +279,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   actual_size = min(count, asgn2_device.data_size - page_queue.head_offset); /*Calculates the acutal size of data to be read*/
 
   /* loops through page list and reads the appropriate amount from each page*/
-  list_for_each_entry(curr, &asgn2_device.mem_list, list){
+  list_for_each_entry_safe(curr, temp, &asgn2_device.mem_list, list){
   
     if(curr_page_no >= begin_page_no){
       begin_offset = page_queue.head_offset;
@@ -292,15 +297,24 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       }
       
     }
-    page_queue.head_index++;
-    //free previous page
-    
-    curr_page_no++;
+    if(begin_offset == 0){
+      page_queue.head_index++;
+      //free previous page
+      __free_page(curr->page);
+      list_del(&curr->list);
+      kfree(curr);
+      freed++;
+      curr_page_no++;
+    }
   }
                     
   //recalculate page queue head and tail indices, might need a spinlock here
-  //subtract freed * page_size from data size
+  page_queue.head_index -= freed;
+  page_queue.tail_index -= freed;
 
+  //subtract freed * page_size from data size
+  asgn2_device.data_size -= freed * PAGE_SIZE;
+  
   return size_read;
 }
 
