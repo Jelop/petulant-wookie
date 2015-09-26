@@ -100,7 +100,7 @@ void free_memory_pages(void) {
     }
     list_del(&curr->list);
     kfree(curr);
-    printk(KERN_INFO "Freed memory");
+    printk(KERN_INFO "Freed memory\n");
   }
 
   /* resets data size and num pages to initial values*/
@@ -222,21 +222,17 @@ int bottom_half(){
     if(curr_page_no >= begin_page_no){
       begin_offset = f_pos % PAGE_SIZE;
       size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
-      while(size_to_copy > 0){
-
-        //size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf + size_written,
-        //size_to_copy); /* stores the number of bytes that remain to be written*/
-
-        //maybe put in a spinlock here?
-        memcpy(page_address(curr->page) + begin_offset, circ_buffer.buf + circ_buffer.head, size_to_copy);
-        circ_buffer.head = (circ_buffer.head + size_to_copy) % BUF_SIZE;
-        // curr_size_written = size_to_copy;
-        size_written += size_to_copy;
-        count -= size_to_copy;
-        f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
-        size_to_copy = 0;
-        begin_offset = f_pos % PAGE_SIZE;
-      }
+    
+      //maybe put in a spinlock here?
+      memcpy(page_address(curr->page) + begin_offset, circ_buffer.buf + circ_buffer.head, size_to_copy);
+      circ_buffer.head = (circ_buffer.head + size_to_copy) % BUF_SIZE;
+ 
+      size_written += size_to_copy;
+      count -= size_to_copy;
+      f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
+      size_to_copy = 0;
+      begin_offset = f_pos % PAGE_SIZE;
+      
     }
     curr_page_no++;
     
@@ -247,6 +243,7 @@ int bottom_half(){
   page_queue.tail_index = curr_page_no-1;
   page_queue.tail_offset = begin_offset;
   printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
+
   return size_written;
      
 }
@@ -260,7 +257,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   size_t size_read = 0;     /* size read from virtual disk in this function */
   size_t begin_offset;      /* the offset from the beginning of a page to
                                start reading */
-  int begin_page_no = *f_pos / PAGE_SIZE; /* the first page which contains
+  int begin_page_no = page_queue.head_index; /* the first page which contains
                                              the requested data */
   int curr_page_no = 0;     /* the current page number */
   size_t curr_size_read;    /* size read from the virtual disk in this round */
@@ -269,18 +266,18 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   size_t size_to_copy;      /* keeps track of size of data to copy for each page*/
   size_t actual_size;       /* variable to track total data that hasn't yet been read*/
   page_node *curr;          /* pointer to a page node for use with list for each entry loop*/
-
-
-
+  
+  int freed = 0;
+  
   if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
-  actual_size = min(count, asgn2_device.data_size - (size_t) *f_pos); /*Calculates the acutal size of data to be read*/
+  actual_size = min(count, asgn2_device.data_size - page_queue.head_offset); /*Calculates the acutal size of data to be read*/
 
   /* loops through page list and reads the appropriate amount from each page*/
   list_for_each_entry(curr, &asgn2_device.mem_list, list){
   
     if(curr_page_no >= begin_page_no){
-      begin_offset = *f_pos % PAGE_SIZE;
+      begin_offset = page_queue.head_offset;
       size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       while(size_to_copy > 0){
         size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
@@ -289,13 +286,20 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
         size_to_copy= size_to_be_read;
         actual_size -= curr_size_read;
         size_read += curr_size_read;
-        *f_pos += curr_size_read;
-        begin_offset = *f_pos % PAGE_SIZE;
+        //*f_pos += curr_size_read;
+        page_queue.head_offset = (page_queue.head_offset + curr_size_read) % PAGE_SIZE;
+        begin_offset = page_queue.head_offset;
       }
+      
     }
-
+    page_queue.head_index++;
+    //free previous page
+    
     curr_page_no++;
   }
+                    
+  //recalculate page queue head and tail indices, might need a spinlock here
+  //subtract freed * page_size from data size
 
   return size_read;
 }
