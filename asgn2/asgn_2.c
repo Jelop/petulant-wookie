@@ -77,6 +77,7 @@ typedef struct asgn2_dev_t {
   struct device *device;   /* the udev device node */
 } asgn2_dev;
 
+int null_flag = 0;
 int wait_flag = -1;
 int null_location = -1;
 int bottom_half();
@@ -144,6 +145,7 @@ int asgn2_open(struct inode *inode, struct file *filp) {
 int asgn2_release (struct inode *inode, struct file *filp) {
 
   /*Decrements number of processes*/
+  null_flag = 0;
   atomic_dec(&asgn2_device.nprocs);  
   return 0;
 }
@@ -287,11 +289,13 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   page_node *temp;
   
   int freed = 0;
-  int null_flag = 0;
+  //int null_flag = 0;
 
   size_t min;
   struct page *curr_page;
 
+  if(null_flag == 1) return 0;
+  
   if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset)
     wait_flag = 1;
     
@@ -371,7 +375,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   
   if(null_flag == 1){
     null_location = page_queue.head_offset;
-    null_flag = 0;
+    //null_flag = 0;
   }
 
   //subtract freed * page_size from data size
