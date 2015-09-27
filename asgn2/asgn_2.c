@@ -259,7 +259,7 @@ int bottom_half(){
 
   //wake up read
   wake_up_interruptible(&wq);
-  printk(KERN_INFO "woke up read\n");
+  //  printk(KERN_INFO "woke up read\n");
   return size_written;
      
 }
@@ -322,14 +322,16 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       for(byte_count = 0; byte_count + pointer < min + pointer; byte_count++){
         //printk(KERN_INFO "in the null for loop, val = %d\n", (int)byte_count);
         if(*((u8*)(pointer+byte_count)) == '\0'){
-            printk(KERN_INFO "Found a null\n");
+
           int temp = PAGE_SIZE - (byte_count + begin_offset);
+          printk(KERN_INFO "Found a null at page position %d\n", begin_offset+byte_count);
           size_to_copy = ((PAGE_SIZE - begin_offset) - temp);
           null_flag = 1;
           break;
         }
       }
 
+      printk(KERN_INFO "Size to copy %d\n", size_to_copy);
       //  printk(KERN_INFO "size to copy = %d\n", size_to_copy);
       while(size_to_copy > 0){
         size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
@@ -344,6 +346,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       }
       
     }
+    //Dont trust this just yet
     if(begin_offset == 0){
       page_queue.head_index++;
       //free previous page
@@ -353,7 +356,8 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       freed++;
       curr_page_no++;
       asgn2_device.num_pages--;
-    }
+      }
+    if(null_flag == 1) break;
   }
   
   //recalculate page queue head and tail indices, might need a spinlock here
