@@ -77,6 +77,7 @@ typedef struct asgn2_dev_t {
   struct device *device;   /* the udev device node */
 } asgn2_dev;
 
+int wait_flag = -1;
 int null_location = -1;
 int bottom_half();
 DECLARE_TASKLET(producer, bottom_half, 0);
@@ -258,6 +259,7 @@ int bottom_half(){
   //printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
   //wake up read
+  wait_flag = 0;
   wake_up_interruptible(&wq);
   //  printk(KERN_INFO "woke up read\n");
   return size_written;
@@ -290,10 +292,12 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   size_t min;
   struct page *curr_page;
 
-  if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset){
-    wait_event_interruptible(wq,1);
+  if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset)
+    wait_flag = 1;
+    
+    wait_event_interruptible(wq, wait_flag == 0);
     printk(KERN_INFO "waiting for data\n");
-  }
+  
   
   printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
   if((int)page_queue.head_offset == null_location){
