@@ -247,7 +247,7 @@ int bottom_half(){
   if(begin_offset == 0)
   page_queue.tail_index++;
   page_queue.tail_offset = begin_offset;
-  //printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
+  printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
   return size_written;
      
@@ -276,30 +276,33 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   int freed = 0;
   int null_flag = 0;
 
-  if(page_queue.head_index == null_location){
+  printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
+  if((int)page_queue.head_offset == null_location){
     null_location = -1;
     page_queue.head_index++;
-    printk(KERN_INFO "returned due to null");
+    printk(KERN_INFO "returned due to null\n");
     return 0;
   }
   
-  if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
+  //if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
   actual_size = min(count, asgn2_device.data_size - page_queue.head_offset); /*Calculates the acutal size of data to be read*/
-
+  int loop = 0;
   /* loops through page list and reads the appropriate amount from each page*/
   list_for_each_entry_safe(curr, temp, &asgn2_device.mem_list, list){
-  
+    printk(KERN_INFO "loop = %d\n", loop);
+    loop++;
     if(curr_page_no >= begin_page_no){
       begin_offset = page_queue.head_offset;
       size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       size_t min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       struct page *curr_page = page_address(curr->page);
-      u8 count;
+      size_t count;
       unsigned long pointer = curr_page + begin_offset;
       for(count = 0; count + pointer < min + pointer; count++){
+        printk(KERN_INFO "in the null for loop, val = %d\n", int(count);
         if(*((u8*)(pointer+count)) == '\0'){
-          printk(KERN_INFO "Found a null");
+            printk(KERN_INFO "Found a null\n");
           int temp = PAGE_SIZE - (count + begin_offset);
           size_to_copy = ((PAGE_SIZE - begin_offset) - temp);
           null_flag = 1;
@@ -339,7 +342,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 
   
   if(null_flag == 1){
-    null_location = page_queue.head_index;
+    null_location = page_queue.head_offset;
     null_flag = 0;
   }
 
