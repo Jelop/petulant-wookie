@@ -293,15 +293,12 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 
   size_t min;
   struct page *curr_page;
-
-  if(null_flag == 1) return 0;
   
   if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset)
     wait_flag = 1;
     
     wait_event_interruptible(wq, wait_flag == 0);
     printk(KERN_INFO "waiting for data\n");
-  
   
   printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
   if((int)page_queue.head_offset == null_location){
@@ -310,6 +307,8 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     printk(KERN_INFO "returned due to null\n");
     return 0;
   }
+
+  if(null_flag == 1) return 0;
   
   //if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
