@@ -175,7 +175,9 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
       circ_buffer.tail = (circ_buffer.tail + 1) % BUF_SIZE;
       //call tasklet
       tasklet_schedule(&producer);
-    
+    } else if((char)half_byte == '\0'){ //if its a null terminator then write it
+      circ_buffer.buf[circ_buffer.tail] = half_byte;
+      
     } else {
       printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
     }
