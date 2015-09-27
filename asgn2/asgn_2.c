@@ -129,9 +129,8 @@ int asgn2_open(struct inode *inode, struct file *filp) {
   atomic_inc(&asgn2_device.nprocs);
 
   /*Frees memory pages when device opened in write only mode*/
-  if((filp->f_flags & O_ACCMODE) == O_WRONLY){
-    printk(KERN_INFO "Write only");
-    free_memory_pages();
+  if((filp->f_flags & O_ACCMODE) != O_RDONLY){
+    return -EACCES;
   }
 
   return 0; /* success */
