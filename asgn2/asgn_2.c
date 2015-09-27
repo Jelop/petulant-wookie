@@ -273,6 +273,12 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   page_node *temp;
   
   int freed = 0;
+  int null_flag = 0;
+
+  if(page_queue.head_index == null_location){
+    page_queue.head_index++;
+    return 0;
+  }
   
   if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
@@ -284,6 +290,18 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     if(curr_page_no >= begin_page_no){
       begin_offset = page_queue.head_offset;
       size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
+      size_t min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
+      struct page *curr_page = page_address(curr->page);
+      u8 count;
+      unsigned long pointer = curr_page + begin_offset;
+      for(count = 0; count + pointer < min + pointer; count++){
+        if(*((u8*)(pointer+count)) == '\0'){
+          int temp = PAGE_SIZE - (count + begin_offset);
+          size_to_copy = ((PAGE_SIZE - begin_offset) - temp);
+          null_flag = 1;
+        }
+      }
+          
       while(size_to_copy > 0){
         size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
                                        size_to_copy);
@@ -305,6 +323,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       kfree(curr);
       freed++;
       curr_page_no++;
+      asgn2_device.num_pages--;
     }
   }
                     
