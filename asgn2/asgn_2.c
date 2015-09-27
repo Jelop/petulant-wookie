@@ -31,6 +31,7 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/circ_buf.h>
+#include <linux/sched.h>
 #include "gpio.h"
 
 #define MYDEV_NAME "asgn2"
@@ -53,6 +54,7 @@ typedef struct circ_buffer_def{
   u8 buf[BUF_SIZE];
   int head;
   int tail;
+  spinlock_t buf_lock;
 } circ_buffer_type;
 
 typedef struct page_queue_def{
@@ -78,6 +80,7 @@ typedef struct asgn2_dev_t {
 int null_location = -1;
 int bottom_half();
 DECLARE_TASKLET(producer, bottom_half, 0);
+DECLARE_WAIT_QUEUE_HEAD(wq);
 circ_buffer_type circ_buffer;
 page_queue_type page_queue;
 
@@ -164,6 +167,7 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
     sig_flag = 1;
     //add to circular buffer
     //printk(KERN_INFO "buffer space remaining: %d\n", CIRC_SPACE(circ_buffer.tail, circ_buffer.head, BUF_SIZE));
+    spin_lock(&circ_buffer.buf_lock);
     if(CIRC_SPACE(circ_buffer.tail, circ_buffer.head, BUF_SIZE) > 0){
       circ_buffer.buf[circ_buffer.tail] = half_byte;
       circ_buffer.tail = (circ_buffer.tail + 1) % BUF_SIZE;
@@ -171,8 +175,9 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
       tasklet_schedule(&producer);
     
     } else {
-      //printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
+      printk(KERN_INFO "BUFFER FULL, Head = %d, Tail = %d\n", circ_buffer.head, circ_buffer.tail);
     }
+    spin_unlock(&circ_buffer.buf_lock);
   }
     
   
@@ -184,6 +189,7 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
 
 int bottom_half(){
 
+  spin_lock(&circ_buffer.buf_lock);
   int count = CIRC_CNT(circ_buffer.tail, circ_buffer.head, BUF_SIZE);
   // printk(KERN_INFO "count = %d\n", count);
  
@@ -236,20 +242,24 @@ int bottom_half(){
       f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
       size_to_copy = 0;
       begin_offset = f_pos % PAGE_SIZE;
-      printk(KERN_INFO "offset = %d, count = %d\n", begin_offset, count);
+      // printk(KERN_INFO "offset = %d, count = %d\n", begin_offset, count);
     }
     curr_page_no++;
     
   }
 
+  spin_unlock(&circ_buffer.buf_lock);
   //printk(KERN_INFO "SIZE WRITTEN = %d\n", size_written);
   asgn2_device.data_size += size_written; //((page_queue.tail_index - page_queue.head_index) * PAGE_SIZE)
   if(begin_offset == 0){
   page_queue.tail_index++;
   }
   page_queue.tail_offset = begin_offset;
-  printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
+  //printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
+  //wake up read
+  wake_up_interruptible(&wq);
+  printk(KERN_INFO "woke up read\n");
   return size_written;
      
 }
@@ -261,7 +271,7 @@ int bottom_half(){
 ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
                    loff_t *f_pos) {
   size_t size_read = 0;     /* size read from virtual disk in this function */
-  size_t begin_offset;      /* the offset from the beginning of a page to
+  size_t begin_offset = 0;      /* the offset from the beginning of a page to
                                start reading */
   int begin_page_no = page_queue.head_index; /* the first page which contains
                                              the requested data */
@@ -277,6 +287,14 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   int freed = 0;
   int null_flag = 0;
 
+  size_t min;
+  struct page *curr_page;
+
+  if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset){
+    wait_event_interruptible(wq,1);
+    printk(KERN_INFO "waiting for data\n");
+  }
+  
   printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
   if((int)page_queue.head_offset == null_location){
     null_location = -1;
@@ -288,30 +306,31 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   //if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
   actual_size = min(count, asgn2_device.data_size - page_queue.head_offset); /*Calculates the acutal size of data to be read*/
-  int loop = 0;
+  //int loop = 0;
   /* loops through page list and reads the appropriate amount from each page*/
   list_for_each_entry_safe(curr, temp, &asgn2_device.mem_list, list){
-    printk(KERN_INFO "loop = %d\n", loop);
-    loop++;
+    //printk(KERN_INFO "loop = %d\n", loop);
+    //loop++;
     if(curr_page_no >= begin_page_no){
       begin_offset = page_queue.head_offset;
       size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
-      size_t min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
-      struct page *curr_page = page_address(curr->page);
-      size_t count;
+      min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
+      curr_page = page_address(curr->page);
+
+      size_t byte_count;
       unsigned long pointer = (unsigned long)curr_page + begin_offset;
-      for(count = 0; count + pointer < min + pointer; count++){
-        printk(KERN_INFO "in the null for loop, val = %d\n", (int)count);
-        if(*((u8*)(pointer+count)) == '\0'){
+      for(byte_count = 0; byte_count + pointer < min + pointer; byte_count++){
+        //printk(KERN_INFO "in the null for loop, val = %d\n", (int)byte_count);
+        if(*((u8*)(pointer+byte_count)) == '\0'){
             printk(KERN_INFO "Found a null\n");
-          int temp = PAGE_SIZE - (count + begin_offset);
+          int temp = PAGE_SIZE - (byte_count + begin_offset);
           size_to_copy = ((PAGE_SIZE - begin_offset) - temp);
           null_flag = 1;
           break;
         }
       }
 
-      printk(KERN_INFO "size to copy = %d\n", size_to_copy);
+      //  printk(KERN_INFO "size to copy = %d\n", size_to_copy);
       while(size_to_copy > 0){
         size_to_be_read = copy_to_user(buf + size_read, page_address(curr->page) + begin_offset,
                                        size_to_copy);
@@ -538,7 +557,8 @@ int __init asgn2_init_module(void){
   //Initialise circular buffer
   circ_buffer.head = 0;
   circ_buffer.tail = 0;
-
+  spin_lock_init(&circ_buffer.buf_lock);
+  
   //initialise page queue struct
   page_queue.head_index = 0;
   page_queue.tail_index = 0;
