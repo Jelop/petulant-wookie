@@ -75,6 +75,7 @@ typedef struct asgn2_dev_t {
   struct device *device;   /* the udev device node */
 } asgn2_dev;
 
+int null_location = -1;
 int bottom_half();
 DECLARE_TASKLET(producer, bottom_half, 0);
 circ_buffer_type circ_buffer;
@@ -276,6 +277,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   int null_flag = 0;
 
   if(page_queue.head_index == null_location){
+    null_location = -1;
     page_queue.head_index++;
     return 0;
   }
@@ -326,10 +328,16 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       asgn2_device.num_pages--;
     }
   }
-                    
+  
   //recalculate page queue head and tail indices, might need a spinlock here
   page_queue.head_index -= freed;
   page_queue.tail_index -= freed;
+
+  
+  if(null_flag == 1){
+    null_location = page_queue.head_index;
+    null_flag = 0;
+  }
 
   //subtract freed * page_size from data size
   asgn2_device.data_size -= freed * PAGE_SIZE;
