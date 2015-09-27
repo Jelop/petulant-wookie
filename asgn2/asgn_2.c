@@ -236,7 +236,7 @@ int bottom_half(){
       f_pos += size_to_copy; /* updates f_pos to correctly calculate begin_offset and update file position pointer*/
       size_to_copy = 0;
       begin_offset = f_pos % PAGE_SIZE;
-      // printk(KERN_INFO "offset = %d, count = %d\n", begin_offset, count);
+      printk(KERN_INFO "offset = %d, count = %d\n", begin_offset, count);
     }
     curr_page_no++;
     
@@ -244,8 +244,9 @@ int bottom_half(){
 
   //printk(KERN_INFO "SIZE WRITTEN = %d\n", size_written);
   asgn2_device.data_size += size_written; //((page_queue.tail_index - page_queue.head_index) * PAGE_SIZE)
-  if(begin_offset == 0)
+  if(begin_offset == 0){
   page_queue.tail_index++;
+  }
   page_queue.tail_offset = begin_offset;
   printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
@@ -279,7 +280,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
   if((int)page_queue.head_offset == null_location){
     null_location = -1;
-    page_queue.head_index++;
+    page_queue.head_offset++;
     printk(KERN_INFO "returned due to null\n");
     return 0;
   }
@@ -298,9 +299,9 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       size_t min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       struct page *curr_page = page_address(curr->page);
       size_t count;
-      unsigned long pointer = curr_page + begin_offset;
+      unsigned long pointer = (unsigned long)curr_page + begin_offset;
       for(count = 0; count + pointer < min + pointer; count++){
-        printk(KERN_INFO "in the null for loop, val = %d\n", int(count);
+        printk(KERN_INFO "in the null for loop, val = %d\n", (int)count);
         if(*((u8*)(pointer+count)) == '\0'){
             printk(KERN_INFO "Found a null\n");
           int temp = PAGE_SIZE - (count + begin_offset);
