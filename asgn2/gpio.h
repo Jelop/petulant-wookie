@@ -1,7 +1,8 @@
+/**
+ * gpio.h
+ * Joshua La Pine 28/09/2015
+ */
 
-//#ifndef GPIO_H
-//#define GPIO_H
-extern int gpio_dummy_init();
-extern int gpio_dummy_exit();
-extern u8 read_half_byte();
-//#end
+int gpio_dummy_init(void);
+int gpio_dummy_exit(void);
+u8 read_half_byte(void);

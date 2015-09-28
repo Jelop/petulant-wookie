@@ -50,6 +50,7 @@ typedef struct page_node_rec {
   struct page *page;
 } page_node;
 
+/* Defines circular buffer*/
 typedef struct circ_buffer_def{
   u8 buf[BUF_SIZE];
   int head;
@@ -57,6 +58,7 @@ typedef struct circ_buffer_def{
   spinlock_t buf_lock;
 } circ_buffer_type;
 
+/* Keeps track of page queue information*/
 typedef struct page_queue_def{
   int head_index;
   int tail_index;
@@ -77,15 +79,19 @@ typedef struct asgn2_dev_t {
   struct device *device;   /* the udev device node */
 } asgn2_dev;
 
-int null_flag = 0;
-int wait_flag = -1;
+/*Variables for session separation and waiting*/
+atomic_t null_flag;
+atomic_t wait_flag;
 int null_location = -1;
-int bottom_half();
+
+/* Declaration for tasklet and wait queue*/
+void bottom_half(unsigned long t_arg);
 DECLARE_TASKLET(producer, bottom_half, 0);
 DECLARE_WAIT_QUEUE_HEAD(wq);
+
+/* Declaration for various required structs*/
 circ_buffer_type circ_buffer;
 page_queue_type page_queue;
-
 asgn2_dev asgn2_device;
 struct proc_dir_entry *asgn2_proc;        /*Proc entry*/
 
@@ -117,8 +123,8 @@ void free_memory_pages(void) {
 
 
 /**
- * This function opens the virtual disk, if it is opened in the write-only
- * mode, all memory pages will be freed.
+ * This function opens the device, will return -EBUSY if already opened by another process.
+ * Will return -EACCES when not opened when not opened in read only mode.
  */
 int asgn2_open(struct inode *inode, struct file *filp) {
 
@@ -128,7 +134,7 @@ int asgn2_open(struct inode *inode, struct file *filp) {
 
   atomic_inc(&asgn2_device.nprocs);
 
-  /*Frees memory pages when device opened in write only mode*/
+  /*Returns -EACCES when device not opened in read only mode*/
   if((filp->f_flags & O_ACCMODE) != O_RDONLY){
     return -EACCES;
   }
@@ -138,23 +144,21 @@ int asgn2_open(struct inode *inode, struct file *filp) {
 
 
 /**
- * This function releases the virtual disk, but nothing needs to be done
- * in this case. 
+ * This function resets null_flag and decrements the number of processes when called
  */
 int asgn2_release (struct inode *inode, struct file *filp) {
 
   /*Decrements number of processes*/
-  null_flag = 0;
+  atomic_set(&null_flag, 0);
   atomic_dec(&asgn2_device.nprocs);  
   return 0;
 }
 
-
+/**
+ * Interrupt handler that reads half bytes from gpio and assembles them into full bytes.
+ * When a full byte is assembled it is copied into a circular buffer and a tasklet is scheduled
+ */
 irqreturn_t dummyport_interrupt(int irq, void*dev_id){
-
-  /*Use a spinlock when writing to and reading from the circular buffer to avoid race conditions
-    spinlock because an interrupt is not allowed to sleep*/
-
   
   static u8 half_byte;
   static int sig_flag = 1;
@@ -191,53 +195,51 @@ irqreturn_t dummyport_interrupt(int irq, void*dev_id){
 }
 
 
-int bottom_half(){
+/**
+ * Tasklet code. Copies the contents of the circular buffer into the page queue.
+ */
+void bottom_half(unsigned long t_arg){
 
-  spin_lock(&circ_buffer.buf_lock);
-  int count = CIRC_CNT(circ_buffer.tail, circ_buffer.head, BUF_SIZE);
-  // printk(KERN_INFO "count = %d\n", count);
+  int count;
  
   size_t size_written = 0;  /* size written to virtual disk in this function */
   size_t begin_offset = 0;   /* the offset from the beginning of a page to start writing */
-  int begin_page_no = page_queue.tail_index;// + (page_queue.tail_offset %PAGE_SIZE);  /* the first page this finction
-  //    should start writing to */
-  //might be worth changing f_pos to a different identifier
+  int begin_page_no = page_queue.tail_index; /* the first page this function should start writing to */
+ 
   int f_pos = page_queue.tail_offset;
   int curr_page_no = 0;     /* the current page number */
  
   size_t size_to_copy;      /* keeps track of how much data is left to copy for a given page*/
   page_node *curr;        /*pointer to a page node for use with list for each entry loop*/
 
+
+  //Lock circular buffer before execution
+  spin_lock(&circ_buffer.buf_lock);
+  count = CIRC_CNT(circ_buffer.tail, circ_buffer.head, BUF_SIZE);
+  
   /* Allocates as many pages as necessary to store count bytes*/
-  //printk(KERN_INFO "num pages * page size = %d\n", asgn2_device.num_pages * PAGE_SIZE);
-  //printk(KERN_INFO "data size + count = %d\n", asgn2_device.data_size + count);
   while(asgn2_device.num_pages * PAGE_SIZE < asgn2_device.data_size + count){
     curr = kmalloc(sizeof(page_node), GFP_KERNEL);
     if(curr){
       curr->page = alloc_page(GFP_KERNEL);
     } else {
       printk(KERN_WARNING "page_node allocation failed\n");
-      return -ENOMEM;
+      return;
     }
     if(curr->page == NULL){
       printk(KERN_WARNING "Page allocation failed\n");
-      return -ENOMEM;
+      return;
     }
-    //printk(KERN_INFO "allocated page %d\n", asgn2_device.num_pages);
     list_add_tail(&(curr->list), &asgn2_device.mem_list);
-    //printk(KERN_INFO "added page to list%d\n", asgn2_device.num_pages);
     asgn2_device.num_pages++;
   }
  
   /* Loops through each page in the list and writes the appropriate amount to each one*/
   list_for_each_entry(curr, &asgn2_device.mem_list, list){
-    //printk(KERN_INFO "current page no = %d\n", curr_page_no);
     if(curr_page_no >= begin_page_no && count > 0){
-      //printk(KERN_INFO "page no = %d\n", curr_page_no);
       begin_offset = f_pos % PAGE_SIZE;
       size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
     
-      //maybe put in a spinlock here?
       memcpy(page_address(curr->page) + begin_offset, circ_buffer.buf + circ_buffer.head, size_to_copy);
       circ_buffer.head = (circ_buffer.head + size_to_copy) % BUF_SIZE;
  
@@ -262,10 +264,10 @@ int bottom_half(){
   //printk(KERN_INFO "data size = %d, tail index = %d, tail offset = %d\n", asgn2_device.data_size, page_queue.tail_index, page_queue.tail_offset);
 
   //wake up read
-  wait_flag = 0;
+  atomic_set(&wait_flag, 0);
   wake_up_interruptible(&wq);
   //  printk(KERN_INFO "woke up read\n");
-  return size_written;
+  //return size_written;
      
 }
 
@@ -296,9 +298,9 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   struct page *curr_page;
   
   if(page_queue.head_index == page_queue.tail_index && page_queue.head_offset == page_queue.tail_offset)
-    wait_flag = 1;
+    atomic_set(&wait_flag, 1);
     
-    wait_event_interruptible(wq, wait_flag == 0);
+  wait_event_interruptible(wq, atomic_read(&wait_flag) == 0);
     printk(KERN_INFO "waiting for data\n");
   
   printk(KERN_INFO "head offset = %d, null_location = %d\n", page_queue.head_offset, null_location);
@@ -309,7 +311,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     return 0;
   }
 
-  if(null_flag == 1) return 0;
+  if(atomic_read(&null_flag) == 1) return 0;
   
   //if(*f_pos > asgn2_device.data_size) return 0; /*Returns if file position is beyond the data size*/
 
@@ -320,13 +322,16 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     //printk(KERN_INFO "loop = %d\n", loop);
     //loop++;
     if(curr_page_no >= begin_page_no){
+
+      size_t byte_count;
+      unsigned long pointer;
       begin_offset = page_queue.head_offset;
       size_to_copy = min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       min =  min((int)actual_size,(int)(PAGE_SIZE - begin_offset));
       curr_page = page_address(curr->page);
 
-      size_t byte_count;
-      unsigned long pointer = (unsigned long)curr_page + begin_offset;
+
+      pointer = (unsigned long)curr_page + begin_offset;
       for(byte_count = 0; byte_count + pointer < min + pointer; byte_count++){
         //printk(KERN_INFO "in the null for loop, val = %d\n", (int)byte_count);
         if(*((u8*)(pointer+byte_count)) == '\0'){
@@ -334,7 +339,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
           int temp = PAGE_SIZE - (byte_count + begin_offset);
           printk(KERN_INFO "Found a null at page position %d\n", begin_offset+byte_count);
           size_to_copy = ((PAGE_SIZE - begin_offset) - temp);
-          null_flag = 1;
+          atomic_set(&null_flag, 1);
           break;
         }
       }
@@ -365,7 +370,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       curr_page_no++;
       asgn2_device.num_pages--;
       }
-    if(null_flag == 1) break;
+    if(atomic_read(&null_flag) == 1) break;
   }
   
   //recalculate page queue head and tail indices, might need a spinlock here
@@ -373,7 +378,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   page_queue.tail_index -= freed;
 
   
-  if(null_flag == 1){
+  if(atomic_read(&null_flag) == 1){
     null_location = page_queue.head_offset;
     //null_flag = 0;
   }
@@ -383,73 +388,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   
   return size_read;
 }
-
-/**
- * This function writes from the user buffer to the virtual disk of this
- * module
- */
-/**
-   ssize_t asgn2_write(struct file *filp, const char __user *buf, size_t count,
-                    loff_t *f_pos) {
-  size_t orig_f_pos = *f_pos; / * the original file position * /
-  size_t size_written = 0;  / * size written to virtual disk in this function * /
-  size_t begin_offset;   / * the offset from the beginning of a page to start writing * /
-  int begin_page_no = *f_pos / PAGE_SIZE;  / * the first page this finction
-                                              should start writing to * /
-
-  int curr_page_no = 0;     / * the current page number * /
-  size_t curr_size_written; / * size written to virtual disk in this round * /
-  size_t size_to_be_written;  / * size to be read in the current round in 
-                                 while loop * /
-  size_t size_to_copy;      / * keeps track of how much data is left to copy for a given page* /
-  page_node *curr;        / *pointer to a page node for use with list for each entry loop* /
- 
-
-  / * Allocates as many pages as necessary to store count bytes* /
-  while(asgn2_device.num_pages * PAGE_SIZE < orig_f_pos + count){
-    curr = kmalloc(sizeof(page_node), GFP_KERNEL);
-    if(curr){
-      curr->page = alloc_page(GFP_KERNEL);
-    } else {
-      printk(KERN_WARNING "page_node allocation failed\n");
-      return -ENOMEM;
-    }
-    if(curr->page == NULL){
-      printk(KERN_WARNING "Page allocation failed\n");
-      return -ENOMEM;
-    }
-    printk(KERN_INFO "allocated page %d\n", asgn2_device.num_pages);
-    list_add_tail(&(curr->list), &asgn2_device.mem_list);
-    printk(KERN_INFO "added page to list%d\n", asgn2_device.num_pages);
-    asgn2_device.num_pages++;
-  }
-
-  / * Loops through each page in the list and writes the appropriate amount to each one* /
-  list_for_each_entry(curr, &asgn2_device.mem_list, list){
-    printk(KERN_INFO "current page no = %d\n", curr_page_no);
-    if(curr_page_no >= begin_page_no){
-      begin_offset = *f_pos % PAGE_SIZE;
-      size_to_copy = min((int)count,(int)( PAGE_SIZE - begin_offset));
-      while(size_to_copy > 0){
-
-        size_to_be_written = copy_from_user(page_address(curr->page) +begin_offset, buf + size_written,
-                                            size_to_copy); / * stores the number of bytes that remain to be written* /
-        curr_size_written = size_to_copy - size_to_be_written;
-        size_to_copy = size_to_be_written;
-        size_written += curr_size_written;
-        count -= curr_size_written;
-        *f_pos += curr_size_written; / * updates f_pos to correctly calculate begin_offset and update file position pointer* /
-        begin_offset = *f_pos % PAGE_SIZE;
-      }
-    }
-    curr_page_no++;
-    
-    }
-
-  asgn2_device.data_size = max(asgn2_device.data_size,
-                               orig_f_pos + size_written);
-  return size_written;
-}*/
 
 #define SET_NPROC_OP 1
 #define TEM_SET_NPROC _IOW(MYIOC_TYPE, SET_NPROC_OP, int) 
@@ -576,6 +514,10 @@ int __init asgn2_init_module(void){
   page_queue.tail_index = 0;
   page_queue.head_offset = 0;
   page_queue.tail_offset = 0;
+
+  //Init wait and null flag
+  atomic_set(&null_flag, 0);
+  atomic_set(&wait_flag, 1);
   
   asgn2_device.class = class_create(THIS_MODULE, MYDEV_NAME);
   if (IS_ERR(asgn2_device.class)) {
